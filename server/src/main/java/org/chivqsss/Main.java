@@ -3,7 +3,7 @@ package org.chivqsss;
 import java.io.IOException;
 
 public class Main {
-    public static void main(String[] args) throws IOException {
+    static void main(String[] args) throws IOException {
         CommandQueue queue = new CommandQueue();
         Storage storage = new Storage();
 

@@ -38,7 +38,7 @@ public class Server {
                 decoder.feed(buffer, read);
                 decoder.tryDecodeOne().ifPresent(queue::enqueue);
             }
-        } catch (IOException e) {
+        } catch (IOException _) {
 
         }
     }
