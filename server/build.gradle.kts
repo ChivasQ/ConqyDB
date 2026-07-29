@@ -1,8 +1,9 @@
 plugins {
     id("java")
+    id("application")
 }
 
-group = "org.example"
+group = "org.chivqsss"
 version = "1.0-SNAPSHOT"
 
 repositories {
@@ -10,6 +11,9 @@ repositories {
 }
 
 dependencies {
+    implementation(project(":protocol"))
+    implementation(project(":storage-engine"))
+
     testImplementation(platform("org.junit:junit-bom:6.0.0"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
@@ -17,4 +21,8 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+}
+
+application {
+    mainClass.set("org.chivqsss.Main")
 }
