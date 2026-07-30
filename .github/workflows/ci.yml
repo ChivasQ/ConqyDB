@@ -16,7 +16,7 @@ jobs:
       - name: Configuring Java
         uses: actions/setup-java@v4
         with:
-          java-version-file: '21'
+          java-version: '25'
           distribution: 'temurin'
           cache: 'gradle'
 
