@@ -1,0 +1,28 @@
+name: ConqyDB CI
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Downloading code from repo
+        uses: actions/checkout@v4
+
+      - name: Configuring Java
+        uses: actions/setup-java@v4
+        with:
+          java-version-file: '21'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Rights for Gradle
+        run: chmod +x gradlew
+
+      - name: Running tests
+        run: ./gradlew test
+

@@ -6,6 +6,6 @@ public record PutCommand(String key, byte[] value, long ttl) implements ICommand
     @Override
     public void execute(CommandTargetObject storage) {
         storage.put(key, value);
-        IO.println("put " + value.length + " bytes to " + key + " | " + new String(value, StandardCharsets.UTF_8));
+        IO.println("put " +  new String(value, StandardCharsets.UTF_8) + " bytes to " + key);
     }
 }
