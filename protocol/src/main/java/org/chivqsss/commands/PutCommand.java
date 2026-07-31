@@ -1,11 +1,15 @@
 package org.chivqsss.commands;
 
+import org.chivqsss.ResponseEncoder;
+
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 
 public record PutCommand(String key, byte[] value, long ttl) implements ICommand {
     @Override
-    public void execute(CommandTargetObject storage) {
-        storage.put(key, value);
-        IO.println("put " +  new String(value, StandardCharsets.UTF_8) + " bytes to " + key);
+    public byte[] execute(CommandTargetObject storage) throws IOException {
+        storage.put(key, value, ttl);
+        return ResponseEncoder.encodeOk();
     }
 }

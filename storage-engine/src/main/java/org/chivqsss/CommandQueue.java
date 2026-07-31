@@ -4,17 +4,22 @@ package org.chivqsss;
 import org.chivqsss.commands.ICommand;
 
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.LinkedBlockingQueue;
 
 public class CommandQueue {
-    private final BlockingQueue<ICommand> queue = new LinkedBlockingQueue<>();
+    private final BlockingQueue<QueuedCommand> queue = new LinkedBlockingQueue<>();
 
-    public void enqueue(ICommand command) {
-        IO.println("enqueue");
-        queue.add(command);
+    public CompletableFuture<byte[]> enqueue(ICommand command) {
+        CompletableFuture<byte[]> future = new CompletableFuture<>();
+        queue.add(new QueuedCommand(command, future));
+        return future;
     }
 
-    public ICommand dequeue() throws InterruptedException {
+    public QueuedCommand dequeue() throws InterruptedException {
         return queue.take();
+    }
+
+    public record QueuedCommand(ICommand command, CompletableFuture<byte[]> responseFuture) {
     }
 }

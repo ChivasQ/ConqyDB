@@ -1,9 +1,6 @@
 package org.chivqsss;
 
-import org.chivqsss.commands.DeleteCommand;
-import org.chivqsss.commands.ICommand;
-import org.chivqsss.commands.GetCommand;
-import org.chivqsss.commands.PutCommand;
+import org.chivqsss.commands.*;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -41,7 +38,7 @@ public class ProtocolDecoder {
 
     private ICommand decodeBody(byte opcode, DataInputStream in) throws IOException {
         return switch (opcode) {
-            case 1 -> {
+            case CommandCodes.PUT -> {
                 int keyLen = in.readUnsignedShort();
                 byte[] key = in.readNBytes(keyLen);
                 int valLen = in.readInt();
@@ -49,12 +46,12 @@ public class ProtocolDecoder {
                 long ttl = in.readLong();
                 yield new PutCommand(new String(key, StandardCharsets.UTF_8), value, ttl);
             }
-            case 0 -> {
+            case CommandCodes.GET -> {
                 int keyLen = in.readUnsignedShort();
                 byte[] key = in.readNBytes(keyLen);
                 yield new GetCommand(new String(key, StandardCharsets.UTF_8));
             }
-            case 2 -> {
+            case CommandCodes.DELETE -> {
                 int keyLen = in.readUnsignedShort();
                 byte[] key = in.readNBytes(keyLen);
                 yield new DeleteCommand(new String(key, StandardCharsets.UTF_8));

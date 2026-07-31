@@ -5,41 +5,32 @@ import java.io.InputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.logging.Logger;
 
 public class Server {
     private final int configuredPort;
     private volatile int boundPort;
     private final CommandQueue queue;
-
+    private final ExecutorService clientPool = Executors.newVirtualThreadPerTaskExecutor();
     private final CountDownLatch bindLatch = new CountDownLatch(1);
+    private final Logger LOGGER = Logger.getLogger("Server");
 
     public Server(int port, CommandQueue queue) {
         this.configuredPort = port;
         this.queue = queue;
     }
 
-    public void start() throws IOException { // single threaded for now
+    public void start() throws IOException {
         try (ServerSocket serverSocket = new ServerSocket(configuredPort)) {
             this.boundPort = serverSocket.getLocalPort();
             bindLatch.countDown();
+
             while (!Thread.currentThread().isInterrupted()) {
                 Socket client = serverSocket.accept();
-                handleClient(client);
+                clientPool.submit(new ClientHandler(client, queue));
             }
-        }
-    }
-
-    private void handleClient(Socket client) {
-        try (client; InputStream in = client.getInputStream()) {
-            ProtocolDecoder decoder = new ProtocolDecoder();
-            byte[] buffer = new byte[4096];
-            int read;
-            while ((read = in.read(buffer)) != -1) {
-                decoder.feed(buffer, read);
-                decoder.tryDecodeOne().ifPresent(queue::enqueue);
-            }
-        } catch (IOException _) {
-
         }
     }
 

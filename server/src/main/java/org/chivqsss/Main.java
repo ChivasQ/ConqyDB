@@ -9,6 +9,7 @@ public class Main {
 
         CommandWorker worker = new CommandWorker(queue, storage);
         Thread workerThread = new Thread(worker);
+
         workerThread.start();
 
         Server server = new Server(8080, queue);

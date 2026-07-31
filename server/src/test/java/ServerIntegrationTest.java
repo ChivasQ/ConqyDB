@@ -35,6 +35,6 @@ public class ServerIntegrationTest {
         }
 
         Thread.sleep(200);
-        assertEquals("value", new String(storage.get("key")));
+        assertEquals("value", new String(storage.get("key").get()));
     }
 }
