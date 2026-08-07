@@ -2,20 +2,20 @@ package org.chivqsss;
 
 import org.chivqsss.disc.WriteAheadLog;
 
-import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.logging.Logger;
 
 public class Engine {
     private final int CACHE_MAX_SIZE; // = 5 * 1024 * 1024;
     private final LinkedHashMap<String, byte[]> CACHE;
-    private final WriteAheadLog wal;
-    private final Path dataDir;
+    private WriteAheadLog wal = null;
+    private Path dataDir = null;
 
 
-    public Engine(int initialCapacity, float loadFactor, int cacheMaxSize, Path dataDir) throws IOException {
+    public Engine(int initialCapacity, float loadFactor, int cacheMaxSize, Path dataDir) {
         this.CACHE_MAX_SIZE = cacheMaxSize;
         this.CACHE = new LinkedHashMap<>(initialCapacity, loadFactor, true) {
             @Override
@@ -23,11 +23,14 @@ public class Engine {
                 return size() > CACHE_MAX_SIZE;
             }
         };
-
-        this.dataDir = dataDir;
-        Files.createDirectories(dataDir);
-        Path dataFile = dataDir.resolve("conqydb.log");
-        this.wal = new WriteAheadLog(dataFile);
+        try {
+            this.dataDir = dataDir;
+            Files.createDirectories(dataDir);
+            Path dataFile = dataDir.resolve("conqydb.log");
+            this.wal = new WriteAheadLog(dataFile);
+        } catch (Exception e) {
+            Storage.LOGGER.warning(e.toString());
+        }
     }
 
     public static Path resolveDefaultDataDir() {
@@ -42,6 +45,7 @@ public class Engine {
         CACHE.put(key, value);
         // put to drive
         wal.put(key, value, ttl);
+        Storage.LOGGER.info("PUT: " + key + " " + new String(value, StandardCharsets.UTF_8));
     }
 
     public Optional<byte[]> get(String key) {
@@ -50,6 +54,7 @@ public class Engine {
         }
         Optional<byte[]> fromDisk = wal.get(key);
         fromDisk.ifPresent(v -> CACHE.put(key, v));
+        Storage.LOGGER.info("GET: " + key);
         return fromDisk;
     }
 

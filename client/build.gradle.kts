@@ -1,6 +1,5 @@
 plugins {
     id("java")
-    id("application")
 }
 
 group = "org.chivqsss"
@@ -11,7 +10,7 @@ repositories {
 }
 
 dependencies {
-    implementation(project(":client"))
+    implementation(project(":protocol"))
 
     testImplementation(platform("org.junit:junit-bom:6.0.0"))
     testImplementation("org.junit.jupiter:junit-jupiter")
@@ -20,8 +19,4 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
-}
-
-application {
-    mainClass.set("org.chivqsss.Main")
 }

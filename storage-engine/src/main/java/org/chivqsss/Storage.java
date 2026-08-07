@@ -2,27 +2,31 @@ package org.chivqsss;
 
 import org.chivqsss.commands.CommandTargetObject;
 
+import java.io.IOException;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Logger;
 
 public class Storage implements CommandTargetObject {
-    private final ConcurrentHashMap<String, byte[]> STORAGE = new ConcurrentHashMap<>();
-    public final Logger LOGGER = Logger.getLogger("DB");
+    public static final Logger LOGGER = Logger.getLogger("DB");
+    private final Engine ENGINE = new Engine(1024, 0.75f, 5 * 1024 * 1024, Engine.resolveDefaultDataDir());
+
+    public Storage() throws IOException {
+    }
 
     @Override
     public void put(String key, byte[] value, long ttl) {
-        STORAGE.put(key, value);
+        ENGINE.put(key, value, ttl);
     }
 
     @Override
     public void delete(String key) {
-        if (STORAGE.remove(key) == null) {
-            LOGGER.warning("No value is present for key: " + key);
-        }
+//        if (STORAGE.remove(key) == null) {
+//            LOGGER.warning("No value is present for key: " + key);
+//        }
     }
 
     public Optional<byte[]> get(String key) {
-        return Optional.ofNullable(STORAGE.get(key));
+        return ENGINE.get(key);
     }
 }
