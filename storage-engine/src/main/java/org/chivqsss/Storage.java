@@ -8,7 +8,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Logger;
 
 public class Storage implements CommandTargetObject {
-    public static final Logger LOGGER = Logger.getLogger("DB");
+    public static final Logger LOGGER = Logger.getLogger("CDB");
     private final Engine ENGINE = new Engine(1024, 0.75f, 5 * 1024 * 1024, Engine.resolveDefaultDataDir());
 
     public Storage() throws IOException {
@@ -21,9 +21,7 @@ public class Storage implements CommandTargetObject {
 
     @Override
     public void delete(String key) {
-//        if (STORAGE.remove(key) == null) {
-//            LOGGER.warning("No value is present for key: " + key);
-//        }
+        ENGINE.remove(key);
     }
 
     public Optional<byte[]> get(String key) {

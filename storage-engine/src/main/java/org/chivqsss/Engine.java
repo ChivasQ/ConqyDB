@@ -61,6 +61,6 @@ public class Engine {
     public void remove(String key) {
         CACHE.remove(key);
         // remove from drive
-        //wal.remove(key);
+        wal.remove(key);
     }
 }

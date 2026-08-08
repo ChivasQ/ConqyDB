@@ -1,5 +1,6 @@
 package org.chivqsss.disc;
 
+import org.chivqsss.Storage;
 import org.chivqsss.commands.CommandCodes;
 
 import java.io.IOException;
@@ -23,6 +24,9 @@ public class WriteAheadLog {
 
 
     public WriteAheadLog(Path dataFile) throws IOException {
+        if (Files.isDirectory(dataFile)) {
+            dataFile = dataFile.resolve("wal.log");
+        }
         this.dataFile = dataFile;
         this.channel = FileChannel.open(dataFile,
                 StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE);
@@ -34,6 +38,11 @@ public class WriteAheadLog {
             DiscIndexEntry entry = index.get(key);
             if (entry == null) return Optional.empty();
 
+            if (entry.expireAt() != 0 && entry.expireAt() < System.currentTimeMillis()) {
+                index.remove(key);
+                return Optional.empty();
+            }
+
             ByteBuffer header = ByteBuffer.allocate(HEADER_BYTES);
 
             channel.read(header, entry.valuePos());
@@ -43,6 +52,7 @@ public class WriteAheadLog {
             int valueLen = header.getInt();
             long ttl = header.getLong(); // TODO: check for TTL
 
+
             ByteBuffer valueBuf = ByteBuffer.allocate(valueLen);
             channel.read(valueBuf, entry.valuePos() + HEADER_BYTES + keyLen);
             return Optional.of(valueBuf.array());
@@ -51,17 +61,29 @@ public class WriteAheadLog {
         }
     }
 
-    public synchronized void put(String key, byte[] value, long ttl) {
+    public synchronized void put(String key, byte[] value, long ttlMs) {
         try {
-            long offset = appendEntry(CommandCodes.PUT, key, value, ttl);
-            index.put(key, new DiscIndexEntry(offset, ttl));
+            long expireAt = ttlMs > 0
+                    ? System.currentTimeMillis() + ttlMs
+                    : 0;
+            long offset = appendEntry(CommandCodes.PUT, key, value, expireAt);
+            index.put(key, new DiscIndexEntry(offset, expireAt));
         } catch (Exception e) {
+            Storage.LOGGER.warning("put command failed" + e);
+        }
+    }
 
+    public synchronized void remove(String key) {
+        try {
+            appendEntry(CommandCodes.DELETE, key, new byte[0], 0);
+            index.remove(key);
+        } catch (Exception e) {
+            Storage.LOGGER.warning("remove command failed" + e);
         }
     }
 
 
-    private long appendEntry(byte opcode, String key, byte[] value, long ttl) throws IOException {
+    private long appendEntry(byte opcode, String key, byte[] value, long ttlMs) throws IOException {
         byte[] keyBytes = key.getBytes(StandardCharsets.UTF_8);
         long offset = channel.size();
 
@@ -70,7 +92,7 @@ public class WriteAheadLog {
         buf.put(opcode);
         buf.putInt(keyBytes.length);
         buf.putInt(value.length);
-        buf.putLong(ttl);
+        buf.putLong(ttlMs);
         //DATA
         buf.put(keyBytes);
         buf.put(value);
@@ -121,13 +143,13 @@ public class WriteAheadLog {
                     .put(CommandCodes.PUT)
                     .putInt(keyBytes.length)
                     .putInt(value.length)
-                    .putLong(e.getValue().ttl())
+                    .putLong(e.getValue().expireAt())
                     .put(keyBytes)
                     .put(value);
 
                 buf.flip();
                 newChannel.write(buf, newOffset);
-                newIndex.put(e.getKey(), new DiscIndexEntry(newOffset, e.getValue().ttl()));
+                newIndex.put(e.getKey(), new DiscIndexEntry(newOffset, e.getValue().expireAt()));
             }
         }
 
