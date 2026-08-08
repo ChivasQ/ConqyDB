@@ -29,13 +29,13 @@ public class DiscStorageTTLTest {
     void valueDisappearsAfterTtlExpires(@TempDir Path tempDir) throws IOException, InterruptedException {
         WriteAheadLog store = new WriteAheadLog(tempDir);
 
-        store.put("session:2", "active".getBytes(StandardCharsets.UTF_8), 100); // живёт 100мс
+        store.put("session:2", "active".getBytes(StandardCharsets.UTF_8), 100); // lives 100 ms
 
         Thread.sleep(105);
 
         Optional<byte[]> value = store.get("session:2");
 
-        assertTrue(value.isEmpty(), "Значение должно быть недоступно после истечения TTL");
+        assertTrue(value.isEmpty(), "Value should be expired");
     }
 
     @Test
@@ -48,6 +48,6 @@ public class DiscStorageTTLTest {
 
         Optional<byte[]> value = store.get("config:forever");
 
-        assertTrue(value.isPresent(), "Запись без TTL не должна протухать");
+        assertTrue(value.isPresent(), "Must never expire");
     }
 }
