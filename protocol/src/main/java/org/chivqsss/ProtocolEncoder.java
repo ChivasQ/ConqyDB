@@ -50,4 +50,24 @@ public class ProtocolEncoder {
 
         return fullStream.toByteArray();
     }
+
+    public static byte[] encodeRemove(String key) throws IOException {
+        ByteArrayOutputStream bodyStream = new ByteArrayOutputStream();
+        DataOutputStream body = new DataOutputStream(bodyStream);
+
+        byte[] keyBytes = key.getBytes(StandardCharsets.UTF_8);
+
+        body.writeByte(CommandCodes.DELETE);      // opcode 0 = GET, 0 = PUT, 2 = DELETE
+        body.writeShort(keyBytes.length);      // key_len
+        body.write(keyBytes);                  // key
+
+        byte[] bodyBytes = bodyStream.toByteArray();
+
+        ByteArrayOutputStream fullStream = new ByteArrayOutputStream();
+        DataOutputStream full = new DataOutputStream(fullStream);
+        full.writeInt(bodyBytes.length);       // length-prefix
+        full.write(bodyBytes);
+
+        return fullStream.toByteArray();
+    }
 }

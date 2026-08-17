@@ -15,6 +15,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.BiConsumer;
 
 public class WriteAheadLog {
     private final Path dataFile;
@@ -30,7 +31,7 @@ public class WriteAheadLog {
         this.dataFile = dataFile;
         this.channel = FileChannel.open(dataFile,
                 StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE);
-        rebuildIndex(); // save the index too, to reduce startup speed
+         // save the index too, to reduce startup speed
     }
 
     public Optional<byte[]> get(String key) {
@@ -102,7 +103,7 @@ public class WriteAheadLog {
         return offset;
     }
 
-    private void rebuildIndex() throws IOException {
+    public void rebuildIndex() throws IOException {
         long pos = 0;
         long size = channel.size();
         while (pos < size) {
@@ -160,4 +161,9 @@ public class WriteAheadLog {
         index.putAll(newIndex);
     }
 
+    public void replayInto(BiConsumer<String, byte[]> loader) {
+        for (Map.Entry<String, DiscIndexEntry> e : index.entrySet()) {
+            get(e.getKey()).ifPresent(value -> loader.accept(e.getKey(), value));
+        }
+    }
 }

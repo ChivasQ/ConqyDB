@@ -103,6 +103,15 @@ public class CDBClient implements AutoCloseable {
         return response.get();
     }
 
+    public void remove(String key) throws IOException {
+        out.write(ProtocolEncoder.encodeRemove(key));
+        out.flush();
+        Response response = readOneResponse();
+        if (response instanceof ErrorResponse err) {
+            throw new CBDClientException(err.message());
+        }
+    }
+
     @Override
     public void close() throws IOException {
         socket.close();

@@ -13,6 +13,7 @@ repositories {
 dependencies {
     implementation(project(":protocol"))
     implementation(project(":storage-engine"))
+    implementation(project(":client"))
 
     testImplementation(platform("org.junit:junit-bom:6.0.0"))
     testImplementation("org.junit.jupiter:junit-jupiter")
