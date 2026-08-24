@@ -20,7 +20,7 @@ import java.util.function.BiConsumer;
 public class WriteAheadLog {
     private final Path dataFile;
     private FileChannel channel;
-    private final ConcurrentHashMap<String, DiscIndexEntry> index = new ConcurrentHashMap<>();
+    private ConcurrentHashMap<String, DiscIndexEntry> index = new ConcurrentHashMap<>();
     private final int HEADER_BYTES = Byte.BYTES + Integer.BYTES*2 + Long.BYTES;
 
 
@@ -166,4 +166,27 @@ public class WriteAheadLog {
             get(e.getKey()).ifPresent(value -> loader.accept(e.getKey(), value));
         }
     }
+
+
+    public Path getDataFile() {
+        return dataFile;
+    }
+
+
+    public void updateIndex(ConcurrentHashMap<String, DiscIndexEntry> index) {
+        this.index = index;
+    }
+
+    public ConcurrentHashMap<String, DiscIndexEntry> getIndex() {
+        return index;
+    }
+
+    public long size() {
+        try {
+            return channel.size();
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
 }

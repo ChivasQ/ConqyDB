@@ -5,15 +5,24 @@ import org.chivqsss.disc.WriteAheadLog;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.ConcurrentSkipListMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BiConsumer;
 import java.util.logging.Logger;
 
 public class Engine {
     private final int CACHE_MAX_SIZE; // = 5 * 1024 * 1024;
     private final int MAX_BYTES_BEFORE_FLUSH;
-    private int BYTES_BEFORE_FLUSH;
+    private AtomicLong BYTES_BEFORE_FLUSH;
+    private final ReentrantLock putFlushLock = new ReentrantLock();
     private final LinkedHashMap<String, byte[]> CACHE;
     private WriteAheadLog wal;
     private Path dataDir;
@@ -23,7 +32,7 @@ public class Engine {
     public Engine(int initialCapacity, float loadFactor, int cacheMaxSize, int maxBytesBeforeFlush, Path dataDir) {
         this.CACHE_MAX_SIZE = cacheMaxSize;
         this.MAX_BYTES_BEFORE_FLUSH = maxBytesBeforeFlush;
-        this.BYTES_BEFORE_FLUSH = 0;
+        this.BYTES_BEFORE_FLUSH = new AtomicLong(0);
 
         this.CACHE = new LinkedHashMap<>(initialCapacity, loadFactor, true) {
             @Override
@@ -52,13 +61,21 @@ public class Engine {
         return base.resolve("conqydb");
     }
 
-    public synchronized void put(String key, byte[] value, long ttl) {
-        CACHE.put(key, value);
-        // put to drive
-        wal.put(key, value, ttl);
-        memTable.put(key, value);
-        this.BYTES_BEFORE_FLUSH += value.length;
-        Storage.LOGGER.info("PUT: " + key + " " + new String(value, StandardCharsets.UTF_8));
+    public void put(String key, byte[] value, long ttl) {
+        putFlushLock.lock();
+        try {
+            CACHE.put(key, value);
+            // put to drive
+            wal.put(key, value, ttl);
+            memTable.put(key, value);
+            this.BYTES_BEFORE_FLUSH.addAndGet(value.length);
+
+            checkForFlush();
+
+            Storage.LOGGER.info("PUT: " + key + " " + new String(value, StandardCharsets.UTF_8));
+        } finally {
+            putFlushLock.unlock();
+        }
     }
 
     public synchronized Optional<byte[]> get(String key) {
@@ -84,8 +101,36 @@ public class Engine {
     }
 
     public void checkForFlush() {
-        if (BYTES_BEFORE_FLUSH >= MAX_BYTES_BEFORE_FLUSH) {
-
+        if (BYTES_BEFORE_FLUSH.get() >= MAX_BYTES_BEFORE_FLUSH) {
+            flush();
         }
+    }
+
+    private void flush() {
+        LocalDateTime date = LocalDateTime.now();
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd--HH-mm-ss");
+        Storage.LOGGER.info("Flush time! " + date.format(formatter));
+
+        Thread thread = new Thread(() -> {
+            putFlushLock.lock();
+            try {
+                // creating new copy with already compacted index
+                Path new_log_path = dataDir.resolve("wal-flush-" + date.format(formatter) + ".log");
+                WriteAheadLog new_log = new WriteAheadLog(new_log_path);
+                this.wal.replayInto(((s, bytes) -> new_log.put(s, bytes, 0)));
+
+                // copy log and assigning to original wal
+                Files.copy(new_log_path, wal.getDataFile(), StandardCopyOption.REPLACE_EXISTING);
+                this.wal.updateIndex(new_log.getIndex());
+
+                BYTES_BEFORE_FLUSH.set(0);
+                Storage.LOGGER.info("Flush end " + date.format(formatter));
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            } finally {
+                putFlushLock.unlock();
+            }
+        });
+        thread.start();
     }
 }
