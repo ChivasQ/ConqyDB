@@ -1,6 +1,8 @@
 package org.chivqsss;
 
+import org.chivqsss.disc.SSTable;
 import org.chivqsss.disc.WriteAheadLog;
+import org.chivqsss.utils.FileUtils;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -18,22 +20,31 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BiConsumer;
 import java.util.logging.Logger;
 
+import static org.chivqsss.utils.FileUtils.parseSeqFromName;
+
 public class Engine {
     private final int CACHE_MAX_SIZE; // = 5 * 1024 * 1024;
     private final int MAX_BYTES_BEFORE_FLUSH;
     private AtomicLong BYTES_BEFORE_FLUSH;
+    private AtomicLong SSTABLE_COUNTER;
     private final ReentrantLock putFlushLock = new ReentrantLock();
     private final LinkedHashMap<String, byte[]> CACHE;
     private WriteAheadLog wal;
     private Path dataDir;
     private ConcurrentSkipListMap<String, byte[]> memTable;
+    private volatile ConcurrentSkipListMap<String, byte[]> flushingMemTable = null;
+    private static final byte[] TOMBSTONE = new byte[0];
 
 
     public Engine(int initialCapacity, float loadFactor, int cacheMaxSize, int maxBytesBeforeFlush, Path dataDir) {
         this.CACHE_MAX_SIZE = cacheMaxSize;
         this.MAX_BYTES_BEFORE_FLUSH = maxBytesBeforeFlush;
         this.BYTES_BEFORE_FLUSH = new AtomicLong(0);
-
+        long maxSeq = Arrays.stream(FileUtils.findFilesSorted(dataDir, "sst"))
+                .mapToLong(f -> parseSeqFromName(f.getName()).orElse(-1))
+                .max()
+                .orElse(-1);
+        SSTABLE_COUNTER = new AtomicLong(maxSeq + 1);
         this.CACHE = new LinkedHashMap<>(initialCapacity, loadFactor, true) {
             @Override
             protected boolean removeEldestEntry(Map.Entry<String, byte[]> eldest) {
@@ -78,31 +89,64 @@ public class Engine {
         }
     }
 
-    public synchronized Optional<byte[]> get(String key) {
-        if (CACHE.containsKey(key)) {
-            Storage.LOGGER.info("GET FROM CACHE: " + key);
-            return Optional.ofNullable(CACHE.get(key));
-        } else if (memTable.containsKey(key)) {
-            byte[] value = memTable.get(key);
-            CACHE.put(key, value); // for access order
-            Storage.LOGGER.info("GET FROM MEMTABLE: " + key);
-            return Optional.ofNullable(value);
-        } else {
-            Storage.LOGGER.info("GET FROM WAL: " + key); // idk if needed
-            return wal.get(key);
+    public Optional<byte[]> get(String key) {
+        putFlushLock.lock();
+        try {
+            if (CACHE.containsKey(key)) {
+                Storage.LOGGER.info("GET FROM CACHE: " + key);
+                byte[] cached = CACHE.get(key);
+                return cached == TOMBSTONE ? Optional.empty() : Optional.of(cached);
+            }
+            if (memTable.containsKey(key)) {
+                byte[] value = memTable.get(key);
+                if (value == TOMBSTONE) return Optional.empty();
+                CACHE.put(key, value); // for access order
+                Storage.LOGGER.info("GET FROM MEMTABLE: " + key);
+                return Optional.ofNullable(value);
+            }
+
+            ConcurrentSkipListMap<String, byte[]> flushing = this.flushingMemTable;
+            if (flushing != null && flushing.containsKey(key)) {
+                byte[] value = flushing.get(key);
+                CACHE.put(key, value);
+                Storage.LOGGER.info("GET FROM FLUSHING MEMTABLE: " + key);
+                return Optional.ofNullable(value);
+            }
+
+            Storage.LOGGER.info("GET FROM SSTABLE: " + key);
+            Optional<byte[]> fromDisk = SSTable.getFromDrive(key, dataDir);
+            if (fromDisk.isPresent()) {
+                byte[] val = fromDisk.get();
+                if (val.length == 0) return Optional.empty();
+
+                CACHE.put(key, val);
+                return Optional.of(val);
+            }
+
+            return fromDisk;
+        } finally {
+            putFlushLock.unlock();
         }
     }
 
     public void remove(String key) {
-        CACHE.remove(key);
-        // remove from drive
-        wal.remove(key);
-        memTable.remove(key);
+        putFlushLock.lock();
+        try {
+            CACHE.remove(key);
+            wal.remove(key);
+
+            memTable.put(key, TOMBSTONE);
+
+            this.BYTES_BEFORE_FLUSH.addAndGet(TOMBSTONE.length);
+            checkForFlush();
+        } finally {
+            putFlushLock.unlock();
+        }
     }
 
     public void checkForFlush() {
-        if (BYTES_BEFORE_FLUSH.get() >= MAX_BYTES_BEFORE_FLUSH) {
-            flush();
+        if (BYTES_BEFORE_FLUSH.get() >= MAX_BYTES_BEFORE_FLUSH && flushingMemTable == null) {
+            flush(); // under lock from put
         }
     }
 
@@ -110,27 +154,41 @@ public class Engine {
         LocalDateTime date = LocalDateTime.now();
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd--HH-mm-ss");
         Storage.LOGGER.info("Flush time! " + date.format(formatter));
+        final ConcurrentSkipListMap<String, byte[]> toFlush = this.memTable; // pointing data to toFlush var in same thread, UNDER LOCK FROM PUT
+        this.flushingMemTable = toFlush;
+        this.memTable = new ConcurrentSkipListMap<>(Comparator.naturalOrder()); // replacing with new memtable in same thread, UNDER LOCK
+
+        final WriteAheadLog oldWal = this.wal;
+        Path newWalPath = dataDir.resolve("conqydb-" + date.format(formatter) + ".log");
+        try {
+            this.wal = new WriteAheadLog(newWalPath);
+        }  catch (Exception e) {
+            Storage.LOGGER.severe("Failed to init WAL: " + e.getMessage());
+            e.printStackTrace();
+            return;
+        }
+
+        BYTES_BEFORE_FLUSH.set(0);
 
         Thread thread = new Thread(() -> {
-            putFlushLock.lock();
             try {
-                // creating new copy with already compacted index
-                Path new_log_path = dataDir.resolve("wal-flush-" + date.format(formatter) + ".log");
-                WriteAheadLog new_log = new WriteAheadLog(new_log_path);
-                this.wal.replayInto(((s, bytes) -> new_log.put(s, bytes, 0)));
+                Path sstablePath = nextSSTablePath(dataDir, SSTABLE_COUNTER.getAndIncrement());
+                SSTable.writeToDisk(toFlush, sstablePath);
+                Storage.LOGGER.info("SSTable successfully saved: " + sstablePath.getFileName());
 
-                // copy log and assigning to original wal
-                Files.copy(new_log_path, wal.getDataFile(), StandardCopyOption.REPLACE_EXISTING);
-                this.wal.updateIndex(new_log.getIndex());
-
-                BYTES_BEFORE_FLUSH.set(0);
-                Storage.LOGGER.info("Flush end " + date.format(formatter));
+                this.flushingMemTable = null;
+                Files.deleteIfExists(oldWal.getDataFile());
+                Storage.LOGGER.info("Old WAL exterminated");
             } catch (Exception e) {
-                throw new RuntimeException(e);
-            } finally {
-                putFlushLock.unlock();
+                Storage.LOGGER.severe("Failed to write SSTable: " + e.getMessage());
+                e.printStackTrace();
+                this.flushingMemTable = null;
             }
         });
         thread.start();
+    }
+
+    public static Path nextSSTablePath(Path dir, long sequenceNumber) {
+        return dir.resolve(String.format("sstable_%019d.sst", sequenceNumber));
     }
 }

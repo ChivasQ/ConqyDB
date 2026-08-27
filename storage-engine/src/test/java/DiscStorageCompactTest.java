@@ -1,8 +1,7 @@
-import org.chivqsss.disc.WriteAheadLog;
+import org.chivqsss.Engine;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import java.io.IOException;
 import java.nio.file.Path;
 import java.util.*;
 
@@ -12,38 +11,42 @@ public class DiscStorageCompactTest {
     Random random = new Random();
 
     @Test
-    void randomPutAndDeleteTest(@TempDir Path tempDir) throws IOException {
-        WriteAheadLog store = new WriteAheadLog(tempDir);
+    void randomPutAndDeleteTest(@TempDir Path tempDir) throws InterruptedException {
+        // cacheMaxSize = 10_000
+        // maxBytesBeforeFlush = 1_000_000
+        Engine engine = new Engine(1000, 0.75f, 10000, 1_000_000, tempDir);
 
         Map<String, byte[]> alive = new HashMap<>();
         Set<String> deleted = new HashSet<>();
-        for (int i = 0; i < 100_000; i++) {
+
+        for (int i = 0; i < 50_000; i++) {
             String s = getRandomString(16);
             byte[] b = getRandomBytes(32);
+
             alive.put(s, b);
             deleted.remove(s);
-            store.put(s, b, 0);
-
+            engine.put(s, b, 0);
 
             int r = random.nextInt(10);
             if (r == 1) {
                 alive.remove(s);
                 deleted.add(s);
-                store.remove(s);
+                engine.remove(s);
             }
         }
 
-        store.compact();
+        Thread.sleep(2000);
 
         alive.forEach((k, v) -> {
-            Optional<byte[]> stored = store.get(k);
-            assertTrue(stored.isPresent(), "Key should be present after compact: " + k);
+            Optional<byte[]> stored = engine.get(k);
+            assertTrue(stored.isPresent(), "Key should be present: " + k);
             assertArrayEquals(v, stored.get(), "Value mismatch for key: " + k);
         });
 
-        deleted.forEach(k ->
-                assertTrue(store.get(k).isEmpty(), "Deleted key should stay absent after compact: " + k)
-        );
+        deleted.forEach(k -> {
+            Optional<byte[]> stored = engine.get(k);
+            assertTrue(stored.isEmpty(), "Deleted key should stay absent: " + k);
+        });
     }
 
     String getRandomString(int len) {

@@ -16,7 +16,10 @@ public class SSTableBitSetPrefix {
         this.size = size * 16;
     }
 
-
+    public SSTableBitSetPrefix(byte[] set) {
+        this.bitSet = BitSet.valueOf(set);
+        this.size = set.length * 8;
+    }
 
     public void add(String key) {
         int hashIndex = Math.abs(key.hashCode() % size);
@@ -24,6 +27,7 @@ public class SSTableBitSetPrefix {
     }
 
     public boolean mightContain(String key) {
+        if (size < 1) return false;
         int hashIndex = Math.abs(key.hashCode() % size);
         return bitSet.get(hashIndex);
     }
