@@ -1,6 +1,7 @@
 package org.chivqsss.utils;
 
 import java.io.File;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -30,4 +31,10 @@ public class FileUtils {
             return OptionalLong.empty();
         }
     }
+
+    public static Comparator<String> utf8Comparator = (s1, s2) -> {
+        byte[] b1 = s1.getBytes(StandardCharsets.UTF_8);
+        byte[] b2 = s2.getBytes(StandardCharsets.UTF_8);
+        return Arrays.compareUnsigned(b1, b2);
+    };
 }

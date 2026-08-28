@@ -156,7 +156,7 @@ public class Engine {
         Storage.LOGGER.info("Flush time! " + date.format(formatter));
         final ConcurrentSkipListMap<String, byte[]> toFlush = this.memTable; // pointing data to toFlush var in same thread, UNDER LOCK FROM PUT
         this.flushingMemTable = toFlush;
-        this.memTable = new ConcurrentSkipListMap<>(Comparator.naturalOrder()); // replacing with new memtable in same thread, UNDER LOCK
+        this.memTable = new ConcurrentSkipListMap<>(FileUtils.utf8Comparator); // replacing with new memtable in same thread, UNDER LOCK
 
         final WriteAheadLog oldWal = this.wal;
         Path newWalPath = dataDir.resolve("conqydb-" + date.format(formatter) + ".log");

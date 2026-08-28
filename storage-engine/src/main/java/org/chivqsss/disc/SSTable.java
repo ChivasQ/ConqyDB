@@ -3,10 +3,7 @@ package org.chivqsss.disc;
 import org.chivqsss.commands.CommandCodes;
 import org.chivqsss.utils.FileUtils;
 
-import java.io.ByteArrayInputStream;
-import java.io.DataInputStream;
-import java.io.File;
-import java.io.IOException;
+import java.io.*;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
@@ -24,43 +21,98 @@ public class SSTable {
 
 
     public static void writeToDisk(SortedMap<String, byte[]> dataToWrite, Path filePath) {
-        long currentOffset = 0;
+        int dataToWriteSize = dataToWrite.size();
         try (FileChannel newChannel = FileChannel.open(filePath, StandardOpenOption.CREATE, StandardOpenOption.WRITE)) {
-            SSTableBitSetPrefix bitSetPrefix = new SSTableBitSetPrefix(dataToWrite.size(), BITS_PER_STRING);
-            ByteBuffer buf_index = ByteBuffer.allocate(dataToWrite.size() * BYTES_PER_STRING + Integer.BYTES);
-            currentOffset += ((long) dataToWrite.size() * BYTES_PER_STRING) + Integer.BYTES;
 
+            SSTableBitSetPrefix bitSetPrefix = new SSTableBitSetPrefix(dataToWriteSize, BITS_PER_STRING);
+
+            ByteArrayOutputStream keysBlock = new ByteArrayOutputStream();
+            DataOutputStream keysOut = new DataOutputStream(keysBlock);
+            ByteArrayOutputStream valuesBlock = new ByteArrayOutputStream();
+            long[] keyPositions = new long[dataToWriteSize];
+
+            int idx = 0;
+            long currentOffset = 0;
             for (Map.Entry<String, byte[]> entry : dataToWrite.entrySet()) {
                 String key = entry.getKey();
                 byte[] value = entry.getValue();
+
                 bitSetPrefix.add(key);
                 byte[] keyBytes = key.getBytes(StandardCharsets.UTF_8);
-                ByteBuffer buf = ByteBuffer.allocate(HEADER_BYTES + keyBytes.length + value.length);
-                buf
-                        .putInt(keyBytes.length)
-                        .putInt(value.length)
-                        .put(keyBytes)
-                        .put(value);
 
-                buf.flip();
-                while (buf.hasRemaining()) {
-                    currentOffset += newChannel.write(buf, currentOffset);
-                }
+                keyPositions[idx++] = keysOut.size();
+                keysOut.writeInt(keyBytes.length);
+                keysOut.write(keyBytes);
+                keysOut.writeLong(currentOffset);
+                keysOut.writeInt(value.length);
+
+                valuesBlock.write(value);
+                currentOffset += value.length;
             }
 
-            buf_index.putInt(dataToWrite.size() * BYTES_PER_STRING);
-            buf_index.put(bitSetPrefix.toByteArray());
+            long offset = 0;
+            byte[] prefixBytes = bitSetPrefix.toByteArray();
+            ByteBuffer header = ByteBuffer.allocate(HEADER_BYTES + prefixBytes.length + Long.BYTES * 2);
+            long positionsBlockSize = (long) dataToWriteSize * Long.BYTES;
+            long keysBlockOffset = header.capacity() + positionsBlockSize;
+            long valuesBlockOffset = keysBlockOffset + keysBlock.size();
 
-            buf_index.position(0);
-            buf_index.limit(buf_index.capacity());
+            header
+                    .putInt(prefixBytes.length)
+                    .put(prefixBytes)
+                    .putInt(dataToWriteSize)
+                    .putLong(keysBlockOffset)
+                    .putLong(valuesBlockOffset);
 
-            long writePos = 0;
-            while (buf_index.hasRemaining()) {
-                writePos += newChannel.write(buf_index, writePos);
+            header.flip();
+
+            // writing header (prefix + keys offsets + value offsets)
+            writeFully(newChannel, header, offset);
+            offset += header.capacity();
+
+            ByteBuffer posBuf = ByteBuffer.allocate((int) positionsBlockSize);
+            for (long p : keyPositions) {
+                posBuf.putLong(p);
             }
+            posBuf.flip();
+
+
+            writeFully(newChannel, posBuf, offset);
+            offset += positionsBlockSize;
+
+
+            // writing keys
+            writeFully(newChannel, ByteBuffer.wrap(keysBlock.toByteArray()), offset);
+            offset += keysBlock.size();
+
+            // writing data
+            writeFully(newChannel, ByteBuffer.wrap(valuesBlock.toByteArray()), offset);
 
         } catch (IOException e) {
             throw new RuntimeException(e);
+        }
+
+
+        // put prefix
+        // put len of list
+        // put long[n] of key offsets
+        // put keys with data offsets
+        // put data
+    }
+
+    private static void writeFully(FileChannel ch, ByteBuffer buf, long position) throws IOException {
+        long pos = position;
+        while (buf.hasRemaining()) {
+            pos += ch.write(buf, pos);
+        }
+    }
+
+    private static void readFully(FileChannel ch, ByteBuffer buf, long position) throws IOException {
+        long pos = position;
+        while (buf.hasRemaining()) {
+            int r = ch.read(buf, pos);
+            if (r < 0) throw new EOFException("Unexpected end of file at " + pos);
+            pos += r;
         }
     }
 
@@ -71,12 +123,12 @@ public class SSTable {
             File sstable = sstables[i];
             try (FileChannel channel = FileChannel.open(sstable.toPath(), StandardOpenOption.READ)) {
                 ByteBuffer sizeBuffer = ByteBuffer.allocate(Integer.BYTES);
-                channel.read(sizeBuffer);
+                readFully(channel, sizeBuffer, 0);
                 sizeBuffer.flip();
                 int prefixBytesSize = sizeBuffer.getInt();
 
                 ByteBuffer prefixBuffer = ByteBuffer.allocate(prefixBytesSize);
-                channel.read(prefixBuffer);
+                readFully(channel, prefixBuffer, Integer.BYTES);
                 prefixBuffer.flip();
 
                 byte[] filterBytes = prefixBuffer.array();
@@ -87,32 +139,53 @@ public class SSTable {
                 }
 
                 byte[] searchKeyBytes = key.getBytes(StandardCharsets.UTF_8);
-                // some loop
-                // TODO: I think that binary search will be better for large files, but you need to write data offsets right after prefix, instead before each key
-                while (channel.position() < channel.size()) {
 
-                    ByteBuffer sizeDataBuffer = ByteBuffer.allocate(HEADER_BYTES);
-                    channel.read(sizeDataBuffer);
-                    sizeDataBuffer.flip();
+                long metaOffset = Integer.BYTES + prefixBytesSize;
+                ByteBuffer meta = ByteBuffer.allocate(Integer.BYTES + Long.BYTES * 2);
+                readFully(channel, meta, metaOffset);
+                meta.flip();
+                int n = meta.getInt();
+                long keysBlockOffset = meta.getLong();
+                long valuesBlockOffset = meta.getLong();
 
-                    int keySize = sizeDataBuffer.getInt();
-                    int valueSize = sizeDataBuffer.getInt();
+                long positionsBlockOffset = metaOffset + meta.capacity();
 
-                    ByteBuffer keyBuffer = ByteBuffer.allocate(keySize);
-                    channel.read(keyBuffer);
-                    keyBuffer.flip();
+                long L = 0, R = n - 1;
+                while (L <= R) {
+                    long mid = (L + R) / 2;
 
-                    byte[] dataKey = keyBuffer.array();
-                    if (Arrays.equals(searchKeyBytes, dataKey)) {
-                        ByteBuffer valueBuffer = ByteBuffer.allocate(valueSize);
-                        channel.read(valueBuffer);
-                        valueBuffer.flip();
-                        return Optional.of(valueBuffer.array());
+                    ByteBuffer posBuf = ByteBuffer.allocate(Long.BYTES);
+                    readFully(channel, posBuf, positionsBlockOffset + mid * Long.BYTES);
+                    posBuf.flip();
+                    long keyRecordOffset = keysBlockOffset + posBuf.getLong();
+
+                    ByteBuffer keyLenBuf = ByteBuffer.allocate(Integer.BYTES);
+                    readFully(channel, keyLenBuf, keyRecordOffset);
+                    keyLenBuf.flip();
+                    int keyLen = keyLenBuf.getInt();
+
+                    ByteBuffer keyBuf = ByteBuffer.allocate(keyLen);
+                    readFully(channel, keyBuf, keyRecordOffset + Integer.BYTES);
+                    keyBuf.flip();
+
+                    int cmp = Arrays.compareUnsigned(keyBuf.array(), searchKeyBytes);
+                    if (cmp == 0) {
+                        ByteBuffer tail = ByteBuffer.allocate(Long.BYTES + Integer.BYTES);
+                        readFully(channel, tail, keyRecordOffset + Integer.BYTES + keyLen);
+                        tail.flip();
+                        long valOffset = tail.getLong();
+                        int valLen = tail.getInt();
+
+                        ByteBuffer valueBuf = ByteBuffer.allocate(valLen);
+                        readFully(channel, valueBuf, valuesBlockOffset + valOffset);
+                        valueBuf.flip();
+                        return Optional.of(valueBuf.array());
+                    } else if (cmp < 0) {
+                        L = mid + 1;
                     } else {
-                        channel.position(channel.position() + valueSize);
+                        R = mid - 1;
                     }
                 }
-
             } catch (IOException e) {
                 throw new RuntimeException(e);
             }
