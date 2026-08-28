@@ -37,8 +37,8 @@ public class SSTable {
                 String key = entry.getKey();
                 byte[] value = entry.getValue();
 
-                bitSetPrefix.add(key);
                 byte[] keyBytes = key.getBytes(StandardCharsets.UTF_8);
+                bitSetPrefix.add(keyBytes);
 
                 keyPositions[idx++] = keysOut.size();
                 keysOut.writeInt(keyBytes.length);
@@ -116,12 +116,10 @@ public class SSTable {
         }
     }
 
-    public static Optional<byte[]> getFromDrive(String key, Path dirPath) {
-        File[] sstables = FileUtils.findFilesSorted(dirPath, "sst");
-
-        for (int i = 0; i < sstables.length; i++) {
-            File sstable = sstables[i];
-            try (FileChannel channel = FileChannel.open(sstable.toPath(), StandardOpenOption.READ)) {
+    public static Optional<byte[]> getFromDrive(String key, List<Path> sstables) {
+        for (int i = 0; i < sstables.size(); i++) {
+            Path sstable = sstables.get(i);
+            try (FileChannel channel = FileChannel.open(sstable, StandardOpenOption.READ)) {
                 ByteBuffer sizeBuffer = ByteBuffer.allocate(Integer.BYTES);
                 readFully(channel, sizeBuffer, 0);
                 sizeBuffer.flip();
@@ -132,13 +130,6 @@ public class SSTable {
                 prefixBuffer.flip();
 
                 byte[] filterBytes = prefixBuffer.array();
-                SSTableBitSetPrefix bitSet = new SSTableBitSetPrefix(filterBytes);
-
-                if (!bitSet.mightContain(key)) {
-                    continue;
-                }
-
-                byte[] searchKeyBytes = key.getBytes(StandardCharsets.UTF_8);
 
                 long metaOffset = Integer.BYTES + prefixBytesSize;
                 ByteBuffer meta = ByteBuffer.allocate(Integer.BYTES + Long.BYTES * 2);
@@ -147,6 +138,13 @@ public class SSTable {
                 int n = meta.getInt();
                 long keysBlockOffset = meta.getLong();
                 long valuesBlockOffset = meta.getLong();
+
+                SSTableBitSetPrefix bitSet = new SSTableBitSetPrefix(filterBytes, n, BITS_PER_STRING);
+
+                byte[] searchKeyBytes = key.getBytes(StandardCharsets.UTF_8);
+                if (!bitSet.mightContain(searchKeyBytes)) {
+                    continue;
+                }
 
                 long positionsBlockOffset = metaOffset + meta.capacity();
 

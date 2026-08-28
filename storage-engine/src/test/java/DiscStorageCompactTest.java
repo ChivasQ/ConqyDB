@@ -19,7 +19,7 @@ public class DiscStorageCompactTest {
         Map<String, byte[]> alive = new HashMap<>();
         Set<String> deleted = new HashSet<>();
 
-        for (int i = 0; i < 50_000; i++) {
+        for (int i = 0; i < 500_000; i++) {
             String s = getRandomString(16);
             byte[] b = getRandomBytes(32);
 

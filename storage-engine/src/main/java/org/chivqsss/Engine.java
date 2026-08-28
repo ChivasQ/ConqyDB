@@ -4,6 +4,7 @@ import org.chivqsss.disc.SSTable;
 import org.chivqsss.disc.WriteAheadLog;
 import org.chivqsss.utils.FileUtils;
 
+import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -13,6 +14,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.ConcurrentSkipListMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -32,6 +34,7 @@ public class Engine {
     private WriteAheadLog wal;
     private Path dataDir;
     private ConcurrentSkipListMap<String, byte[]> memTable;
+    private final CopyOnWriteArrayList<Path> sstablesList = new CopyOnWriteArrayList<>();
     private volatile ConcurrentSkipListMap<String, byte[]> flushingMemTable = null;
     private static final byte[] TOMBSTONE = new byte[0];
 
@@ -57,8 +60,14 @@ public class Engine {
             Path dataFile = dataDir.resolve("conqydb.log");
             this.wal = new WriteAheadLog(dataFile);
             this.wal.rebuildIndex();
-            this.memTable = new ConcurrentSkipListMap<>(Comparator.naturalOrder());
+            this.memTable = new ConcurrentSkipListMap<>(FileUtils.utf8Comparator);
             this.wal.replayInto((s, bytes) -> memTable.put(s, bytes));
+
+            File[] initialFiles = FileUtils.findFilesSorted(dataDir, "sst");
+            for (File f : initialFiles) {
+                sstablesList.add(f.toPath());
+            }
+
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
@@ -108,13 +117,14 @@ public class Engine {
             ConcurrentSkipListMap<String, byte[]> flushing = this.flushingMemTable;
             if (flushing != null && flushing.containsKey(key)) {
                 byte[] value = flushing.get(key);
+                if (value == TOMBSTONE) return Optional.empty();
                 CACHE.put(key, value);
                 Storage.LOGGER.info("GET FROM FLUSHING MEMTABLE: " + key);
                 return Optional.ofNullable(value);
             }
 
             Storage.LOGGER.info("GET FROM SSTABLE: " + key);
-            Optional<byte[]> fromDisk = SSTable.getFromDrive(key, dataDir);
+            Optional<byte[]> fromDisk = SSTable.getFromDrive(key, sstablesList);
             if (fromDisk.isPresent()) {
                 byte[] val = fromDisk.get();
                 if (val.length == 0) return Optional.empty();
@@ -175,7 +185,7 @@ public class Engine {
                 Path sstablePath = nextSSTablePath(dataDir, SSTABLE_COUNTER.getAndIncrement());
                 SSTable.writeToDisk(toFlush, sstablePath);
                 Storage.LOGGER.info("SSTable successfully saved: " + sstablePath.getFileName());
-
+                sstablesList.addFirst(sstablePath);
                 this.flushingMemTable = null;
                 Files.deleteIfExists(oldWal.getDataFile());
                 Storage.LOGGER.info("Old WAL exterminated");

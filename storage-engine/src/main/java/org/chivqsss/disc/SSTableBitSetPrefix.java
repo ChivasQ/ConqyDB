@@ -1,5 +1,6 @@
 package org.chivqsss.disc;
 
+import java.util.Arrays;
 import java.util.BitSet;
 
 public class SSTableBitSetPrefix {
@@ -16,19 +17,19 @@ public class SSTableBitSetPrefix {
         this.size = size * 16;
     }
 
-    public SSTableBitSetPrefix(byte[] set) {
+    public SSTableBitSetPrefix(byte[] set, int originalDataSize, int bitsPerString) {
         this.bitSet = BitSet.valueOf(set);
-        this.size = set.length * 8;
+        this.size = originalDataSize * bitsPerString;
     }
 
-    public void add(String key) {
-        int hashIndex = Math.abs(key.hashCode() % size);
+    public void add(byte[] key) {
+        int hashIndex = (Arrays.hashCode(key) & 0x7FFFFFFF) % size;
         bitSet.set(hashIndex);
     }
 
-    public boolean mightContain(String key) {
+    public boolean mightContain(byte[] key) {
         if (size < 1) return false;
-        int hashIndex = Math.abs(key.hashCode() % size);
+        int hashIndex = (Arrays.hashCode(key) & 0x7FFFFFFF) % size;
         return bitSet.get(hashIndex);
     }
 
