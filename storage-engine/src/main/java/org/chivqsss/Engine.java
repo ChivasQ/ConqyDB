@@ -8,23 +8,18 @@ import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
-import java.util.function.BiConsumer;
-import java.util.logging.Logger;
 
 import static org.chivqsss.utils.FileUtils.parseSeqFromName;
 
 public class Engine {
+    public static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd--HH-mm-ss");
     private final int CACHE_MAX_SIZE; // = 5 * 1024 * 1024;
     private final int MAX_BYTES_BEFORE_FLUSH;
     private AtomicLong BYTES_BEFORE_FLUSH;
@@ -43,7 +38,7 @@ public class Engine {
         this.CACHE_MAX_SIZE = cacheMaxSize;
         this.MAX_BYTES_BEFORE_FLUSH = maxBytesBeforeFlush;
         this.BYTES_BEFORE_FLUSH = new AtomicLong(0);
-        long maxSeq = Arrays.stream(FileUtils.findFilesSorted(dataDir, "sst"))
+        long maxSeq = Arrays.stream(FileUtils.findSSTableSorted(dataDir, "sst"))
                 .mapToLong(f -> parseSeqFromName(f.getName()).orElse(-1))
                 .max()
                 .orElse(-1);
@@ -57,13 +52,13 @@ public class Engine {
         try {
             this.dataDir = dataDir;
             Files.createDirectories(dataDir);
-            Path dataFile = dataDir.resolve("conqydb.log");
+            Path dataFile = FileUtils.findNewestWAL(dataDir).toPath();
             this.wal = new WriteAheadLog(dataFile);
             this.wal.rebuildIndex();
             this.memTable = new ConcurrentSkipListMap<>(FileUtils.utf8Comparator);
             this.wal.replayInto((s, bytes) -> memTable.put(s, bytes));
 
-            File[] initialFiles = FileUtils.findFilesSorted(dataDir, "sst");
+            File[] initialFiles = FileUtils.findSSTableSorted(dataDir, "sst");
             for (File f : initialFiles) {
                 sstablesList.add(f.toPath());
             }
@@ -162,14 +157,13 @@ public class Engine {
 
     private void flush() {
         LocalDateTime date = LocalDateTime.now();
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd--HH-mm-ss");
-        Storage.LOGGER.info("Flush time! " + date.format(formatter));
+        Storage.LOGGER.info("Flush time! " + date.format(DATE_TIME_FORMATTER));
         final ConcurrentSkipListMap<String, byte[]> toFlush = this.memTable; // pointing data to toFlush var in same thread, UNDER LOCK FROM PUT
         this.flushingMemTable = toFlush;
         this.memTable = new ConcurrentSkipListMap<>(FileUtils.utf8Comparator); // replacing with new memtable in same thread, UNDER LOCK
 
         final WriteAheadLog oldWal = this.wal;
-        Path newWalPath = dataDir.resolve("conqydb-" + date.format(formatter) + ".log");
+        Path newWalPath = dataDir.resolve("conqydb-" + date.format(DATE_TIME_FORMATTER) + ".log");
         try {
             this.wal = new WriteAheadLog(newWalPath);
         }  catch (Exception e) {
